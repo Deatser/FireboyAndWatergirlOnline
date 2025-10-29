@@ -1,0 +1,92 @@
+/* Общие стили */
+body {
+	font-family: Arial, sans-serif;
+	margin: 20px;
+	background-color: #f5f5f5;
+}
+
+h1 {
+	text-align: center;
+}
+
+/* Инпут и кнопки */
+#serverName {
+	padding: 5px;
+	font-size: 14px;
+}
+
+button {
+	padding: 5px 10px;
+	margin-left: 5px;
+	font-size: 14px;
+	cursor: pointer;
+}
+
+button:disabled {
+	background-color: #ccc;
+	cursor: not-allowed;
+}
+
+/* Список серверов */
+ul#serverList {
+	list-style: none;
+	padding: 0;
+}
+
+ul#serverList li {
+	padding: 10px;
+	margin-bottom: 10px;
+	border: 1px solid #ccc;
+	border-radius: 5px;
+	background-color: #f5e1a4; /* коричневато-жёлтый фон для всех серверов */
+}
+
+/* Сервер к которому подключен игрок */
+ul#serverList li.activeServer {
+	background-color: #a4b88f; /* оливково-моховый */
+}
+
+/* Список игроков внутри сервера */
+ul#serverList li div.playerList {
+	font-size: 12px;
+	margin-left: 10px;
+	margin-top: 5px;
+}
+
+#serverList li div.player-line {
+	display: flex;
+	align-items: center;
+	margin: 2px 0;
+}
+
+#serverList li div.player-line input[type='checkbox'] {
+	margin-right: 8px;
+}
+
+.server-box {
+	position: relative;
+	background: #222;
+	padding: 10px;
+	border-radius: 12px;
+	margin: 10px;
+	color: white;
+}
+
+.message-overlay,
+.countdown-overlay {
+	position: absolute;
+	top: 0;
+	left: 0;
+	right: 0;
+	bottom: 0;
+	display: flex;
+	justify-content: center;
+	align-items: center;
+	font-size: 32px;
+	font-weight: bold;
+	background: rgba(0, 0, 0, 0.7);
+	border-radius: 12px;
+	z-index: 10;
+	color: white;
+	transition: opacity 0.3s;
+}

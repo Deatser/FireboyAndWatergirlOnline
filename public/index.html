@@ -1,0 +1,25 @@
+<!DOCTYPE html>
+<html lang="ru">
+	<head>
+		<meta charset="UTF-8" />
+		<title>Вход в игру</title>
+		<link rel="stylesheet" href="index.css" />
+	</head>
+	<body>
+		<h1>Вход в игру</h1>
+
+		<div id="authDiv">
+			<input
+				type="text"
+				id="nickname"
+				placeholder="Ник (обязателен только для регистрации)"
+			/>
+			<input type="tel" id="phone" placeholder="Номер телефона" required />
+			<button id="loginBtn">Войти</button>
+			<button id="registerBtn">Регистрация</button>
+			<button id="guestBtn">Играть как гость</button>
+		</div>
+
+		<script type="module" src="js/index.js"></script>
+	</body>
+</html>
