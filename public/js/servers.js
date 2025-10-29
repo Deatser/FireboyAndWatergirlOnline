@@ -1,4 +1,4 @@
-import { db, auth, signInAsGuest } from './firebase-config.js'
+import { db } from './firebase-config.js'
 import {
 	ref,
 	set,
@@ -18,23 +18,31 @@ let playerName = localStorage.getItem('playerName')
 let isGuest = localStorage.getItem('isGuest') === 'true'
 let myServerKey = null
 
+// === Проверка, играет ли пользователь, до рендера страницы ===
+async function checkIsPlaying() {
+	if (!playerUid) return
+	const snap = await get(ref(db, `users/${playerUid}/isPlaying`))
+	if (snap.val() === true) {
+		window.location.href = 'game.html'
+	}
+}
+checkIsPlaying()
+
+// === Функция рендера серверов ===
 function renderServers(serversData) {
 	serverListEl.innerHTML = ''
 
 	for (const [serverKey, server] of Object.entries(serversData || {})) {
 		const li = document.createElement('li')
 		const isConnected = server.players && server.players[playerUid]
-
 		li.style.background = isConnected ? '#8FBC8F' : '#FFDDA0'
 
-		// Название сервера
 		const title = document.createElement('div')
 		title.textContent = `${server.name} (${
 			Object.keys(server.players || {}).length
 		}/${server.maxPlayers || 2})`
 		li.appendChild(title)
 
-		// Список игроков с чекбоксами
 		const playersDiv = document.createElement('div')
 		playersDiv.className = 'players'
 
@@ -63,7 +71,6 @@ function renderServers(serversData) {
 		}
 		li.appendChild(playersDiv)
 
-		// Кнопка подключения/отключения
 		const btn = document.createElement('button')
 		if (isConnected) {
 			btn.textContent = 'Отключиться'
@@ -90,6 +97,7 @@ function renderServers(serversData) {
 			btn.onclick = async () => {
 				if (myServerKey)
 					return alert('Вы уже подключены к серверу. Сначала отключитесь.')
+
 				await set(
 					ref(db, `servers/${serverKey}/players/${playerUid}`),
 					playerName
@@ -102,30 +110,49 @@ function renderServers(serversData) {
 		}
 		li.appendChild(btn)
 
-		// Кнопка начать игру
+		// === Кнопка начать игру (только для хоста) ===
 		const startBtn = document.createElement('button')
 		startBtn.textContent = 'Начать игру'
+
 		const allReady =
 			server.ready &&
 			Object.keys(server.ready).length === server.maxPlayers &&
 			Object.values(server.ready).every(Boolean)
+
 		startBtn.disabled = !isConnected || playerUid !== server.owner || !allReady
-		startBtn.onclick = () => alert('Игра стартует!')
+
+		startBtn.onclick = async () => {
+			await set(ref(db, `servers/${serverKey}/start`), true)
+
+			const playerUids = Object.keys(server.players || {})
+
+			// isPlaying = true и playingWith
+			if (playerUids.length === 2) {
+				const [uid1, uid2] = playerUids
+				await set(ref(db, `users/${uid1}/isPlaying`), true)
+				await set(ref(db, `users/${uid2}/isPlaying`), true)
+
+				await set(ref(db, `users/${uid1}/playingWith`), uid2)
+				await set(ref(db, `users/${uid2}/playingWith`), uid1)
+			}
+
+			localStorage.setItem('myServerKey', serverKey)
+			window.location.href = 'game.html'
+		}
 		li.appendChild(startBtn)
 
-		// Статус сервера
 		const statusDiv = document.createElement('div')
 		statusDiv.className = 'status'
-
 		const numPlayers = Object.keys(server.players || {}).length
+
 		if (numPlayers < server.maxPlayers) {
 			statusDiv.textContent = 'Ждем больше игроков'
 			statusDiv.style.color = 'gray'
 		} else if (!allReady) {
-			statusDiv.textContent = 'Ждем когда все игроки будут готовы'
+			statusDiv.textContent = 'Ждем когда все будут готовы'
 			statusDiv.style.color = 'orange'
 		} else {
-			statusDiv.textContent = 'Ждем когда хост начнет игру'
+			statusDiv.textContent = 'Все готовы — ждём хоста'
 			statusDiv.style.color = 'green'
 		}
 
@@ -134,20 +161,24 @@ function renderServers(serversData) {
 	}
 }
 
-// Слежение за изменениями серверов
-const serversRef = ref(db, 'servers')
-onValue(serversRef, async snapshot => {
+// === Слежение за изменениями серверов ===
+onValue(ref(db, 'servers'), async snapshot => {
 	let serversData = snapshot.val() || {}
 
-	// Удаляем пустые серверы
 	for (const [key, server] of Object.entries(serversData)) {
 		if (!server.players || Object.keys(server.players).length === 0) {
 			await remove(ref(db, `servers/${key}`))
 			delete serversData[key]
 		}
+
+		// если кто-то уже играет, редиректим
+		if (server.start && server.players && server.players[playerUid]) {
+			localStorage.setItem('myServerKey', key)
+			window.location.href = 'game.html'
+			return
+		}
 	}
 
-	// Обновляем myServerKey
 	myServerKey = null
 	for (const [key, server] of Object.entries(serversData)) {
 		if (server.players && server.players[playerUid]) {
@@ -159,31 +190,26 @@ onValue(serversRef, async snapshot => {
 	renderServers(serversData)
 })
 
-// Создание нового сервера
+// === Создание нового сервера ===
 createServerBtn.onclick = async () => {
 	const name = serverNameInput.value.trim()
 	if (!name) return alert('Введите название сервера')
-	if (myServerKey)
-		return alert('Вы уже подключены к серверу. Сначала отключитесь.')
+	if (myServerKey) return alert('Вы уже подключены к серверу.')
 
 	const snapshot = await get(child(ref(db), 'servers'))
 	const serversData = snapshot.val() || {}
 	for (const server of Object.values(serversData)) {
-		if (server.name === name)
-			return alert('Сервер с таким названием уже существует')
+		if (server.name === name) return alert('Такой сервер уже есть')
 	}
 
 	const newServerRef = ref(db, `servers/${Date.now()}`)
 	await set(newServerRef, {
-		name: name,
+		name,
 		maxPlayers: 2,
-		players: {
-			[playerUid]: playerName,
-		},
+		players: { [playerUid]: playerName },
 		owner: playerUid,
-		ready: {
-			[playerUid]: false,
-		},
+		ready: { [playerUid]: false },
+		start: false,
 	})
 	myServerKey = newServerRef.key
 }
