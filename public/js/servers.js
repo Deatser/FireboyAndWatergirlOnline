@@ -129,6 +129,15 @@ function renderServers(serversData) {
 			// isPlaying = true и playingWith
 			if (playerUids.length === 2) {
 				const [uid1, uid2] = playerUids
+
+				// === Раздача персонажей ===
+				const randomChar = Math.floor(Math.random() * 2) + 1 // 1 или 2
+				const char1 = randomChar
+				const char2 = randomChar === 1 ? 2 : 1
+
+				await set(ref(db, `users/${uid1}/character`), char1)
+				await set(ref(db, `users/${uid2}/character`), char2)
+
 				await set(ref(db, `users/${uid1}/isPlaying`), true)
 				await set(ref(db, `users/${uid2}/isPlaying`), true)
 
@@ -171,7 +180,6 @@ onValue(ref(db, 'servers'), async snapshot => {
 			delete serversData[key]
 		}
 
-		// если кто-то уже играет, редиректим
 		if (server.start && server.players && server.players[playerUid]) {
 			localStorage.setItem('myServerKey', key)
 			window.location.href = 'game.html'

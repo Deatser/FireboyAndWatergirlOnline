@@ -3,42 +3,7 @@
 	<head>
 		<meta charset="UTF-8" />
 		<title>Игра</title>
-		<style>
-			body {
-				margin: 0;
-				background: #111;
-				display: flex;
-				align-items: center;
-				justify-content: center;
-				color: white;
-				height: 100vh;
-				font-family: sans-serif;
-				flex-direction: column;
-			}
-			.box {
-				background: #222;
-				border-radius: 20px;
-				width: 80%;
-				height: 70%;
-				display: flex;
-				align-items: center;
-				justify-content: center;
-				font-size: 2em;
-				margin-bottom: 20px;
-			}
-			button {
-				padding: 10px 20px;
-				font-size: 1.2em;
-				border: none;
-				border-radius: 10px;
-				cursor: pointer;
-				background: #ff5555;
-				color: white;
-			}
-			button:hover {
-				background: #ff2222;
-			}
-		</style>
+		<link rel="stylesheet" href="css/game.css" />
 
 		<!-- Проверка isPlaying до рендера страницы -->
 		<script type="module">
@@ -67,8 +32,12 @@
 		</script>
 	</head>
 	<body>
-		<div class="box">Игра скоро начнется...</div>
-		<button id="endGameBtn">Закончить игру (тест)</button>
+		<div id="gameContainer">
+			<div class="box">
+				<canvas id="gameCanvas"></canvas>
+			</div>
+			<button id="endGameBtn">Закончить игру</button>
+		</div>
 
 		<script type="module" src="./js/game.js"></script>
 	</body>

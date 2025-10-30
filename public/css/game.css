@@ -1,0 +1,69 @@
+body {
+	margin: 0;
+	padding: 0;
+	background-color: #111;
+	color: white;
+	font-family: sans-serif;
+	height: 100vh;
+	display: flex;
+	flex-direction: column;
+	justify-content: center;
+	align-items: center;
+}
+
+#gameContainer {
+	display: flex;
+	flex-direction: column;
+	align-items: center;
+	justify-content: center;
+	width: 100%;
+	height: 100%;
+}
+
+.box {
+	background: #222;
+	border-radius: 20px;
+	aspect-ratio: 16 / 9;
+	width: 75%;
+	max-width: 1600px;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	overflow: hidden;
+	position: relative;
+}
+
+/* адаптивное увеличение при маленьком экране */
+@media (max-width: 1500px) {
+	.box {
+		width: 85%;
+	}
+}
+@media (max-width: 1200px) {
+	.box {
+		width: 95%;
+	}
+}
+
+canvas {
+	background: #333;
+	width: 100%;
+	height: 100%;
+	border-radius: 20px;
+}
+
+#endGameBtn {
+	margin-top: 20px;
+	padding: 12px 28px;
+	font-size: 1.1em;
+	border: none;
+	border-radius: 10px;
+	cursor: pointer;
+	background: #ff5555;
+	color: white;
+	transition: background-color 0.3s;
+}
+
+#endGameBtn:hover {
+	background: #ff2222;
+}

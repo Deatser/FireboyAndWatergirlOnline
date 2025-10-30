@@ -3,49 +3,23 @@
 	<head>
 		<meta charset="UTF-8" />
 		<title>Серверы Fireboy & Watergirl</title>
+		<link rel="stylesheet" href="css/layout.css" />
 		<link rel="stylesheet" href="css/servers.css" />
-		<style>
-			ul {
-				list-style: none;
-				padding: 0;
-			}
-			li {
-				margin-bottom: 10px;
-				padding: 10px;
-				border: 1px solid #888;
-				border-radius: 5px;
-			}
-			.players {
-				margin-left: 10px;
-				margin-top: 5px;
-			}
-			.player-item {
-				display: flex;
-				align-items: center;
-				margin-bottom: 3px;
-			}
-			.player-item span {
-				margin-right: 10px;
-			}
-			.status {
-				margin-top: 5px;
-				font-style: italic;
-				font-weight: bold;
-			}
-		</style>
-
 		<script type="module" src="./js/checkPlaying.js"></script>
 	</head>
 	<body>
-		<h1>Серверы</h1>
+		<div class="main-box">
+			<h1>Серверы</h1>
 
-		<div>
-			<input type="text" id="serverName" placeholder="Название сервера" />
-			<button id="createServerBtn">Создать сервер</button>
+			<div class="server-controls">
+				<input type="text" id="serverName" placeholder="Название сервера" />
+				<button id="createServerBtn">Создать сервер</button>
+			</div>
+
+			<ul id="serverList"></ul>
 		</div>
 
-		<ul id="serverList"></ul>
-
+		<script src="js/layout.js"></script>
 		<script type="module" src="js/servers.js"></script>
 	</body>
 </html>
