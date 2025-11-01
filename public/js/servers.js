@@ -122,11 +122,8 @@ function renderServers(serversData) {
 		startBtn.disabled = !isConnected || playerUid !== server.owner || !allReady
 
 		startBtn.onclick = async () => {
-			await set(ref(db, `servers/${serverKey}/start`), true)
-
 			const playerUids = Object.keys(server.players || {})
 
-			// isPlaying = true и playingWith
 			if (playerUids.length === 2) {
 				const [uid1, uid2] = playerUids
 
@@ -135,15 +132,25 @@ function renderServers(serversData) {
 				const char1 = randomChar
 				const char2 = randomChar === 1 ? 2 : 1
 
-				await set(ref(db, `users/${uid1}/character`), char1)
-				await set(ref(db, `users/${uid2}/character`), char2)
-
-				await set(ref(db, `users/${uid1}/isPlaying`), true)
-				await set(ref(db, `users/${uid2}/isPlaying`), true)
-
-				await set(ref(db, `users/${uid1}/playingWith`), uid2)
-				await set(ref(db, `users/${uid2}/playingWith`), uid1)
+				// === Установка полей игроков с currentGame ===
+				await set(ref(db, `users/${uid1}`), {
+					isPlaying: true,
+					playingWith: uid2,
+					character: char1,
+					currentGame: serverKey,
+					isGamePageActive: 0,
+				})
+				await set(ref(db, `users/${uid2}`), {
+					isPlaying: true,
+					playingWith: uid1,
+					character: char2,
+					currentGame: serverKey,
+					isGamePageActive: 0,
+				})
 			}
+
+			// === Запуск игры на сервере ===
+			await set(ref(db, `servers/${serverKey}/start`), true)
 
 			localStorage.setItem('myServerKey', serverKey)
 			window.location.href = 'game.html'

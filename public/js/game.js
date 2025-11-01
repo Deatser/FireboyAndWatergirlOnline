@@ -31,10 +31,10 @@ console.log('Canvas size:', canvas.width, canvas.height)
 
 // === Тайлы ===
 const tilesetImg = new Image()
-tilesetImg.src = '../layout/TilesetDemo.png'
+tilesetImg.src = '../layout/Tileset.png'
 tilesetImg.onload = () => console.log('Tileset загружен')
 tilesetImg.onerror = () => console.error('Ошибка загрузки Tileset')
-const tilesetColumns = mapData.tilesets?.[0]?.columns || 4
+const tilesetColumns = 5
 
 // === Коллизии ===
 const collisionLayer = mapData.layers.find(
@@ -52,7 +52,6 @@ console.log('Коллизий найдено:', collisionRects.length, collision
 
 // === Игроки ===
 const playerUid = localStorage.getItem('playerUid')
-const myServerKey = localStorage.getItem('myServerKey')
 const endGameBtn = document.getElementById('endGameBtn')
 
 // === Проверка активной вкладки ===
@@ -69,13 +68,15 @@ window.addEventListener('beforeunload', async () => {
 
 // === Проверка isPlaying ===
 async function checkIsPlaying() {
-	if (!playerUid || !myServerKey) {
-		console.warn('Нет playerUid или myServerKey — редирект на index')
+	const userSnap = await get(ref(db, `users/${playerUid}`))
+	const userData = userSnap.val()
+	const myServerKey = userData?.currentGame
+	if (!userData?.isPlaying || !myServerKey) {
+		console.warn('Нет активной игры — редирект на index')
 		window.location.href = 'index.html'
 		return
 	}
-	const s = await get(ref(db, `users/${playerUid}/isPlaying`))
-	if (!s.val()) window.location.href = 'index.html'
+
 	onValue(ref(db, `users/${playerUid}/isPlaying`), sn => {
 		if (!sn.exists() || sn.val() === false) {
 			localStorage.removeItem('myServerKey')
@@ -84,38 +85,33 @@ async function checkIsPlaying() {
 	})
 }
 
-// === Завершение игры ===
+// === Кнопка завершения игры ===
 endGameBtn.addEventListener('click', async () => {
 	try {
-		const userRef = ref(db, `users/${playerUid}`)
-		const snap = await get(userRef)
-		const userData = snap.val()
-		const partnerUid = userData?.playingWith
+		const userSnap = await get(ref(db, `users/${playerUid}`))
+		const userData = userSnap.val()
+		const myServerKey = userData?.currentGame
+		if (!myServerKey) return
 
-		await set(ref(db, `users/${playerUid}/isPlaying`), false)
-		await set(ref(db, `users/${playerUid}/playingWith`), null)
-		await set(ref(db, `users/${playerUid}/character`), -1)
+		// Ставим start = false на сервере
+		await set(ref(db, `servers/${myServerKey}/start`), false)
 
-		if (partnerUid) {
-			await set(ref(db, `users/${partnerUid}/isPlaying`), false)
-			await set(ref(db, `users/${partnerUid}/playingWith`), null)
-			await set(ref(db, `users/${partnerUid}/character`), -1)
-		}
+		// Удаляем игрока с сервера
+		await remove(ref(db, `servers/${myServerKey}/players/${playerUid}`))
 
-		if (myServerKey) {
-			await set(ref(db, `servers/${myServerKey}/start`), false)
-			await set(ref(db, `servers/${myServerKey}/players/${playerUid}`), null)
-			if (partnerUid)
-				await set(ref(db, `servers/${myServerKey}/players/${partnerUid}`), null)
+		// Обнуляем данные игрока
+		await set(ref(db, `users/${playerUid}`), {
+			isPlaying: false,
+			playingWith: null,
+			character: -1,
+			currentGame: null,
+			isGamePageActive: -1,
+		})
 
-			const serverSnap = await get(ref(db, `servers/${myServerKey}/players`))
-			const playersLeft = serverSnap.val() || {}
-			if (Object.keys(playersLeft).length === 0) {
-				await remove(ref(db, `servers/${myServerKey}`))
-			}
-		}
-
+		// Локальные данные
 		localStorage.removeItem('myServerKey')
+
+		// Редирект
 		window.location.href = 'servers.html'
 	} catch (err) {
 		console.error('Ошибка при завершении игры:', err)
@@ -145,7 +141,7 @@ let partnerUid = null
 let positions = {} // { uid: { x, y, width, height, color } }
 let targetPositions = {}
 const PLAYER_W = 35
-const PLAYER_H = 73
+const PLAYER_H = 64
 
 // === Линейная интерполяция ===
 function lerp(a, b, t) {
@@ -190,8 +186,10 @@ async function initGame() {
 	const userData = userSnap.val()
 	character = userData?.character
 	partnerUid = userData?.playingWith
-	if (!character || character === -1) {
-		console.error('Нет персонажа — редирект')
+	const myServerKey = userData?.currentGame
+
+	if (!character || character === -1 || !myServerKey) {
+		console.error('Нет персонажа или сервера — редирект')
 		window.location.href = 'servers.html'
 		return
 	}
@@ -199,19 +197,13 @@ async function initGame() {
 	const myColor = character === 1 ? 'orange' : 'cyan'
 	const partnerColor = character === 1 ? 'cyan' : 'orange'
 
-	function findGroundY(x) {
-		const mid = x + PLAYER_W / 2
-		const cols = collisionRects.filter(r => mid >= r.x && mid <= r.x + r.width)
-		if (cols.length) return Math.max(...cols.map(r => r.y)) - PLAYER_H
-		return canvas.height - PLAYER_H
-	}
-
+	// Игрок
 	const posSnap = await get(
 		ref(db, `servers/${myServerKey}/positions/${playerUid}`)
 	)
 	const lastPos = posSnap.exists() ? posSnap.val() : null
-	const startX = lastPos?.x ?? 200
-	const startY = lastPos?.y ?? findGroundY(startX)
+	const startX = lastPos?.x ?? 81
+	const startY = lastPos?.y ?? (character === 1 ? 830 : 703.1875)
 	positions[playerUid] = {
 		x: startX,
 		y: startY,
@@ -221,6 +213,7 @@ async function initGame() {
 	}
 	targetPositions[playerUid] = startX
 
+	// Партнёр
 	if (partnerUid) {
 		const partnerSnap = await get(ref(db, `users/${partnerUid}`))
 		if (partnerSnap.exists()) {
@@ -228,8 +221,10 @@ async function initGame() {
 				ref(db, `servers/${myServerKey}/positions/${partnerUid}`)
 			)
 			const pLastPos = partnerPosSnap.exists() ? partnerPosSnap.val() : null
-			const pStartX = pLastPos?.x ?? 600
-			const pStartY = pLastPos?.y ?? findGroundY(pStartX)
+			const pStartX = pLastPos?.x ?? 81
+			const pStartY =
+				pLastPos?.y ??
+				(partnerSnap.val().character === 1 ? 831.04347826087 : 703.1875)
 			positions[partnerUid] = {
 				x: pStartX,
 				y: pStartY,
@@ -269,7 +264,7 @@ async function initGame() {
 function startLoop() {
 	const speed = 2
 	const gravity = 0.05
-	const jumpForce = -12 * Math.sqrt(gravity / 0.6)
+	const jumpForce = -12.5 * Math.sqrt(gravity / 0.6)
 	const maxFallSpeed = 12
 	let velocityY = 0
 	let jumpKeyReleased = true
@@ -311,28 +306,19 @@ function startLoop() {
 
 		// Проверка горизонтальных коллизий
 		for (const rect of collisionRects) {
-			const px = player.x
-			const py = player.y
-			const pw = player.width
-			const ph = player.height
-
-			const rx = rect.x
-			const ry = rect.y
-			const rw = rect.width
-			const rh = rect.height
-
-			// Проверяем пересечение
+			const px = player.x,
+				py = player.y,
+				pw = player.width,
+				ph = player.height
+			const rx = rect.x,
+				ry = rect.y,
+				rw = rect.width,
+				rh = rect.height
 			if (px < rx + rw && px + pw > rx && py < ry + rh && py + ph > ry) {
-				// Смотрим, с какой стороны зашел в объект
 				const overlapLeft = px + pw - rx
 				const overlapRight = rx + rw - px
-				if (overlapLeft < overlapRight) {
-					// Упёрся слева
-					player.x -= overlapLeft
-				} else {
-					// Упёрся справа
-					player.x += overlapRight
-				}
+				if (overlapLeft < overlapRight) player.x -= overlapLeft
+				else player.x += overlapRight
 			}
 		}
 
@@ -340,8 +326,6 @@ function startLoop() {
 		velocityY += gravity
 		if (velocityY > maxFallSpeed) velocityY = maxFallSpeed
 		let newY = player.y + velocityY
-
-		// Проверка вертикальных коллизий
 		for (const rect of collisionRects) {
 			if (player.x + player.width > rect.x && player.x < rect.x + rect.width) {
 				if (
@@ -359,7 +343,6 @@ function startLoop() {
 				}
 			}
 		}
-
 		if (newY + player.height > canvas.height) {
 			newY = canvas.height - player.height
 			velocityY = 0
@@ -393,11 +376,20 @@ function startLoop() {
 			ctx.strokeRect(r.x, r.y, r.width, r.height)
 		})
 
-		set(ref(db, `servers/${myServerKey}/positions/${playerUid}`), {
-			x: player.x,
-			y: player.y,
-			color: player.color,
-		}).catch(e => console.warn('Ошибка при записи позиций:', e))
+		set(
+			ref(
+				db,
+				`servers/${
+					positions[playerUid].currentGame ||
+					localStorage.getItem('myServerKey')
+				}/positions/${playerUid}`
+			),
+			{
+				x: player.x,
+				y: player.y,
+				color: player.color,
+			}
+		).catch(e => console.warn('Ошибка при записи позиций:', e))
 
 		requestAnimationFrame(draw)
 	}
