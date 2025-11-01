@@ -7,42 +7,77 @@ import {
 	remove,
 } from 'https://www.gstatic.com/firebasejs/11.0.1/firebase-database.js'
 
+let mapData = null
+
+// === Загрузка карты ===
+try {
+	console.log('Загрузка карты TiledTest.json...')
+	const resp = await fetch('../layout/TiledTest.json')
+	if (!resp.ok) throw new Error(`Ошибка загрузки карты: ${resp.status}`)
+	mapData = await resp.json()
+	console.log('Карта успешно загружена')
+} catch (err) {
+	console.error('Ошибка при загрузке карты:', err)
+	throw err
+}
+
+// === Canvas ===
+const canvas = document.getElementById('gameCanvas')
+const ctx = canvas.getContext('2d')
+const tileSize = mapData.tilewidth || 32
+canvas.width = (mapData.width || 25) * tileSize
+canvas.height = (mapData.height || 16) * tileSize
+console.log('Canvas size:', canvas.width, canvas.height)
+
+// === Тайлы ===
+const tilesetImg = new Image()
+tilesetImg.src = '../layout/TilesetDemo.png'
+tilesetImg.onload = () => console.log('Tileset загружен')
+tilesetImg.onerror = () => console.error('Ошибка загрузки Tileset')
+const tilesetColumns = mapData.tilesets?.[0]?.columns || 4
+
+// === Коллизии ===
+const collisionLayer = mapData.layers.find(
+	l => l.name === 'coll' && l.type === 'objectgroup'
+)
+const collisionRects = collisionLayer
+	? collisionLayer.objects.map(obj => ({
+			x: Number(obj.x),
+			y: Number(obj.y),
+			width: Number(obj.width),
+			height: Number(obj.height),
+	  }))
+	: []
+console.log('Коллизий найдено:', collisionRects.length, collisionRects)
+
+// === Игроки ===
 const playerUid = localStorage.getItem('playerUid')
 const myServerKey = localStorage.getItem('myServerKey')
 const endGameBtn = document.getElementById('endGameBtn')
 
+// === Проверка активной вкладки ===
 const playerRef = ref(db, `users/${playerUid}/isGamePageActive`)
-
-// Проверяем, есть ли уже активная вкладка
-const snap = await get(playerRef)
-if (snap.val() === 1) {
-	// Если есть, закрываем текущую вкладку до рендера
+const snapActive = await get(playerRef)
+if (snapActive.val() === 1) {
 	document.body.innerHTML = '<h1>Вкладка уже активна!</h1>'
 } else {
-	// Устанавливаем, что текущая вкладка активна
 	await set(playerRef, 1)
 }
-
-// При закрытии вкладки или обновлении — сброс
 window.addEventListener('beforeunload', async () => {
 	await set(playerRef, -1)
 })
 
-// === Проверка, играет ли игрок ===
+// === Проверка isPlaying ===
 async function checkIsPlaying() {
 	if (!playerUid || !myServerKey) {
+		console.warn('Нет playerUid или myServerKey — редирект на index')
 		window.location.href = 'index.html'
 		return
 	}
-
-	const snap = await get(ref(db, `users/${playerUid}/isPlaying`))
-	if (!snap.val()) {
-		window.location.href = 'index.html'
-		return
-	}
-
-	onValue(ref(db, `users/${playerUid}/isPlaying`), snap => {
-		if (!snap.exists() || snap.val() === false) {
+	const s = await get(ref(db, `users/${playerUid}/isPlaying`))
+	if (!s.val()) window.location.href = 'index.html'
+	onValue(ref(db, `users/${playerUid}/isPlaying`), sn => {
+		if (!sn.exists() || sn.val() === false) {
 			localStorage.removeItem('myServerKey')
 			window.location.href = 'servers.html'
 		}
@@ -87,18 +122,7 @@ endGameBtn.addEventListener('click', async () => {
 	}
 })
 
-// === Canvas и позиции ===
-const canvas = document.getElementById('gameCanvas')
-const ctx = canvas.getContext('2d')
-canvas.width = 800
-canvas.height = 500
-
-let character = null
-let partnerUid = null
-let positions = {} // текущие позиции { uid: { x, y, color } }
-let targetPositions = {} // для плавного движения по X
-
-// === Клавиши для движения ===
+// === Клавиши ===
 const keys = {
 	a: false,
 	d: false,
@@ -108,42 +132,56 @@ const keys = {
 	ц: false,
 	' ': false,
 }
-
-// === Прыжок ===
-const groundY = canvas.height - 100
-const jumpHeight = 150
-const jumpSpeed = 0.008
-let isJumping = false
-let jumpProgress = 0
-let jumpKeyReleased = true // чтобы не было бесконечных прыжков
-
 document.addEventListener('keydown', e => {
 	if (e.key in keys) keys[e.key] = true
-
-	// Начало прыжка
-	if (
-		(e.key === 'w' || e.key === 'ц' || e.key === ' ') &&
-		!isJumping &&
-		jumpKeyReleased
-	) {
-		isJumping = true
-		jumpProgress = 0
-		jumpKeyReleased = false
-	}
 })
-
 document.addEventListener('keyup', e => {
 	if (e.key in keys) keys[e.key] = false
-
-	// Отпуск кнопки прыжка
-	if (e.key === 'w' || e.key === 'ц' || e.key === ' ') {
-		jumpKeyReleased = true
-	}
 })
+
+// === Игроки и позиции ===
+let character = null
+let partnerUid = null
+let positions = {} // { uid: { x, y, width, height, color } }
+let targetPositions = {}
+const PLAYER_W = 35
+const PLAYER_H = 73
 
 // === Линейная интерполяция ===
 function lerp(a, b, t) {
 	return a + (b - a) * t
+}
+
+// === Отрисовка карты ===
+function drawMap(ctx, showHitboxes = true) {
+	if (!mapData.layers) return
+	for (const layer of mapData.layers) {
+		if (layer.type !== 'tilelayer') continue
+		for (let y = 0; y < layer.height; y++) {
+			for (let x = 0; x < layer.width; x++) {
+				const tileIndex = layer.data[y * layer.width + x]
+				if (!tileIndex) continue
+				const sx = ((tileIndex - 1) % tilesetColumns) * tileSize
+				const sy = Math.floor((tileIndex - 1) / tilesetColumns) * tileSize
+				ctx.drawImage(
+					tilesetImg,
+					sx,
+					sy,
+					tileSize,
+					tileSize,
+					x * tileSize,
+					y * tileSize,
+					tileSize,
+					tileSize
+				)
+			}
+		}
+	}
+	if (showHitboxes) {
+		ctx.strokeStyle = 'blue'
+		ctx.lineWidth = 1
+		collisionRects.forEach(r => ctx.strokeRect(r.x, r.y, r.width, r.height))
+	}
 }
 
 // === Инициализация игры ===
@@ -152,9 +190,8 @@ async function initGame() {
 	const userData = userSnap.val()
 	character = userData?.character
 	partnerUid = userData?.playingWith
-
 	if (!character || character === -1) {
-		console.error('Нет персонажа, возврат...')
+		console.error('Нет персонажа — редирект')
 		window.location.href = 'servers.html'
 		return
 	}
@@ -162,123 +199,211 @@ async function initGame() {
 	const myColor = character === 1 ? 'orange' : 'cyan'
 	const partnerColor = character === 1 ? 'cyan' : 'orange'
 
-	// Получаем последнюю позицию игрока из Firebase
+	function findGroundY(x) {
+		const mid = x + PLAYER_W / 2
+		const cols = collisionRects.filter(r => mid >= r.x && mid <= r.x + r.width)
+		if (cols.length) return Math.max(...cols.map(r => r.y)) - PLAYER_H
+		return canvas.height - PLAYER_H
+	}
+
 	const posSnap = await get(
 		ref(db, `servers/${myServerKey}/positions/${playerUid}`)
 	)
 	const lastPos = posSnap.exists() ? posSnap.val() : null
-
+	const startX = lastPos?.x ?? 200
+	const startY = lastPos?.y ?? findGroundY(startX)
 	positions[playerUid] = {
-		x: lastPos?.x ?? (character === 1 ? 200 : 600),
-		y: lastPos?.y ?? groundY,
+		x: startX,
+		y: startY,
+		width: PLAYER_W,
+		height: PLAYER_H,
 		color: myColor,
 	}
-	targetPositions[playerUid] = positions[playerUid].x
+	targetPositions[playerUid] = startX
 
-	// Партнёр
 	if (partnerUid) {
 		const partnerSnap = await get(ref(db, `users/${partnerUid}`))
 		if (partnerSnap.exists()) {
 			const partnerPosSnap = await get(
 				ref(db, `servers/${myServerKey}/positions/${partnerUid}`)
 			)
-			const partnerLastPos = partnerPosSnap.exists()
-				? partnerPosSnap.val()
-				: null
-
+			const pLastPos = partnerPosSnap.exists() ? partnerPosSnap.val() : null
+			const pStartX = pLastPos?.x ?? 600
+			const pStartY = pLastPos?.y ?? findGroundY(pStartX)
 			positions[partnerUid] = {
-				x: partnerLastPos?.x ?? (character === 1 ? 600 : 200),
-				y: partnerLastPos?.y ?? groundY,
+				x: pStartX,
+				y: pStartY,
+				width: PLAYER_W,
+				height: PLAYER_H,
 				color: partnerColor,
 			}
-			targetPositions[partnerUid] = positions[partnerUid].x
+			targetPositions[partnerUid] = pStartX
 		}
 	}
 
-	// Подписка на позиции всех игроков
+	// Подписка на позиции с сервера
 	onValue(ref(db, `servers/${myServerKey}/positions`), snap => {
 		const data = snap.val()
-		if (data) {
-			Object.keys(data).forEach(uid => {
-				if (!positions[uid]) {
-					positions[uid] = {
-						x: data[uid].x,
-						y: data[uid].y ?? groundY,
-						color: data[uid].color,
-					}
-					targetPositions[uid] = data[uid].x
-				} else if (uid !== playerUid) {
-					// для других игроков — обновляем их позиции
-					targetPositions[uid] = data[uid].x
-					positions[uid].y = data[uid].y ?? groundY
+		if (!data) return
+		Object.keys(data).forEach(uid => {
+			if (!positions[uid]) {
+				positions[uid] = {
+					x: data[uid].x,
+					y: data[uid].y ?? canvas.height - PLAYER_H,
+					width: PLAYER_W,
+					height: PLAYER_H,
+					color: data[uid].color,
 				}
-			})
-		}
+				targetPositions[uid] = data[uid].x
+			} else if (uid !== playerUid) {
+				targetPositions[uid] = data[uid].x
+				positions[uid].y = data[uid].y ?? positions[uid].y
+			}
+		})
 	})
 
 	startLoop()
 }
 
-// === Главный цикл игры ===
+// === Главный цикл с прыжками ===
 function startLoop() {
 	const speed = 2
-	const cubeWidth = 50
-	const cubeHeight = 50
+	const gravity = 0.05
+	const jumpForce = -12 * Math.sqrt(gravity / 0.6)
+	const maxFallSpeed = 12
+	let velocityY = 0
+	let jumpKeyReleased = true
 	const lerpFactor = 0.2
 
-	function draw() {
-		// Горизонтальное движение
-		if (positions[playerUid]) {
-			if (keys.a || keys.ф) targetPositions[playerUid] -= speed
-			if (keys.d || keys.в) targetPositions[playerUid] += speed
-			targetPositions[playerUid] = Math.max(
-				0,
-				Math.min(canvas.width - cubeWidth, targetPositions[playerUid])
+	document.addEventListener('keydown', e => {
+		if (e.key in keys) keys[e.key] = true
+		if ((e.key === 'w' || e.key === 'ц' || e.key === ' ') && jumpKeyReleased) {
+			const player = positions[playerUid]
+			if (!player) return
+			let onGround = collisionRects.some(
+				r =>
+					player.x + player.width > r.x &&
+					player.x < r.x + r.width &&
+					Math.abs(player.y + player.height - r.y) < 1
 			)
-		}
-
-		Object.keys(positions).forEach(uid => {
-			positions[uid].x = lerp(
-				positions[uid].x,
-				targetPositions[uid],
-				lerpFactor
-			)
-		})
-
-		// Прыжок
-		if (isJumping) {
-			jumpProgress += jumpSpeed
-			if (jumpProgress >= 1) {
-				jumpProgress = 0
-				isJumping = false
+			if (onGround) {
+				velocityY = jumpForce
+				jumpKeyReleased = false
 			}
-			positions[playerUid].y =
-				groundY - jumpHeight * Math.sin(Math.PI * jumpProgress)
-		} else {
-			positions[playerUid].y = groundY
+		}
+	})
+	document.addEventListener('keyup', e => {
+		if (e.key in keys) keys[e.key] = false
+		if (e.key === 'w' || e.key === 'ц' || e.key === ' ') jumpKeyReleased = true
+	})
+
+	function draw() {
+		const player = positions[playerUid]
+		if (!player) {
+			requestAnimationFrame(draw)
+			return
 		}
 
-		// Отрисовка
-		ctx.clearRect(0, 0, canvas.width, canvas.height)
-		Object.values(positions).forEach(p => {
-			ctx.fillStyle = p.color
-			ctx.fillRect(p.x, p.y, cubeWidth, cubeHeight)
+		// Движение по X
+		if (keys.a || keys.ф) player.x -= speed
+		if (keys.d || keys.в) player.x += speed
+		player.x = Math.max(0, Math.min(canvas.width - player.width, player.x))
+
+		// Проверка горизонтальных коллизий
+		for (const rect of collisionRects) {
+			const px = player.x
+			const py = player.y
+			const pw = player.width
+			const ph = player.height
+
+			const rx = rect.x
+			const ry = rect.y
+			const rw = rect.width
+			const rh = rect.height
+
+			// Проверяем пересечение
+			if (px < rx + rw && px + pw > rx && py < ry + rh && py + ph > ry) {
+				// Смотрим, с какой стороны зашел в объект
+				const overlapLeft = px + pw - rx
+				const overlapRight = rx + rw - px
+				if (overlapLeft < overlapRight) {
+					// Упёрся слева
+					player.x -= overlapLeft
+				} else {
+					// Упёрся справа
+					player.x += overlapRight
+				}
+			}
+		}
+
+		// Движение по Y
+		velocityY += gravity
+		if (velocityY > maxFallSpeed) velocityY = maxFallSpeed
+		let newY = player.y + velocityY
+
+		// Проверка вертикальных коллизий
+		for (const rect of collisionRects) {
+			if (player.x + player.width > rect.x && player.x < rect.x + rect.width) {
+				if (
+					player.y + player.height <= rect.y &&
+					newY + player.height >= rect.y
+				) {
+					newY = rect.y - player.height
+					velocityY = 0
+				} else if (
+					player.y >= rect.y + rect.height &&
+					newY <= rect.y + rect.height
+				) {
+					newY = rect.y + rect.height
+					velocityY = 0
+				}
+			}
+		}
+
+		if (newY + player.height > canvas.height) {
+			newY = canvas.height - player.height
+			velocityY = 0
+		}
+		player.y = newY
+
+		// Линейная интерполяция позиций других игроков
+		Object.keys(positions).forEach(uid => {
+			if (uid !== playerUid)
+				positions[uid].x = lerp(
+					positions[uid].x,
+					targetPositions[uid],
+					lerpFactor
+				)
 		})
 
-		// Сохраняем позицию игрока в Firebase
-		if (positions[playerUid])
-			set(ref(db, `servers/${myServerKey}/positions/${playerUid}`), {
-				x: positions[playerUid].x,
-				y: positions[playerUid].y,
-				color: positions[playerUid].color,
-			})
+		ctx.clearRect(0, 0, canvas.width, canvas.height)
+		drawMap(ctx, true)
+
+		Object.values(positions).forEach(p => {
+			ctx.fillStyle = p.color || 'magenta'
+			ctx.fillRect(p.x, p.y, p.width, p.height)
+			ctx.strokeStyle = 'red'
+			ctx.lineWidth = 2
+			ctx.strokeRect(p.x, p.y, p.width, p.height)
+		})
+
+		collisionRects.forEach(r => {
+			ctx.strokeStyle = 'blue'
+			ctx.lineWidth = 1
+			ctx.strokeRect(r.x, r.y, r.width, r.height)
+		})
+
+		set(ref(db, `servers/${myServerKey}/positions/${playerUid}`), {
+			x: player.x,
+			y: player.y,
+			color: player.color,
+		}).catch(e => console.warn('Ошибка при записи позиций:', e))
 
 		requestAnimationFrame(draw)
 	}
-
 	draw()
 }
 
-// === Запуск игры ===
+// === Старт ===
 checkIsPlaying()
 initGame()
