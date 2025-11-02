@@ -34,7 +34,7 @@ const tilesetImg = new Image()
 tilesetImg.src = '../layout/Tileset.png'
 tilesetImg.onload = () => console.log('Tileset загружен')
 tilesetImg.onerror = () => console.error('Ошибка загрузки Tileset')
-const tilesetColumns = 5
+const tilesetColumns = 4
 
 // === Коллизии ===
 const collisionLayer = mapData.layers.find(
@@ -84,6 +84,27 @@ async function checkIsPlaying() {
 		}
 	})
 }
+
+// === Кнопка переключения хитбоксов ===
+const toggleCollBtn = document.getElementById('toggleCollBtn')
+let isShowColl = localStorage.getItem('isShowColl') === 'true'
+
+// При загрузке страницы — установить текст кнопки и состояние
+if (isShowColl) {
+	toggleCollBtn.textContent = 'Выключить хитбоксы'
+} else {
+	toggleCollBtn.textContent = 'Включить хитбоксы'
+}
+
+// Обработчик клика по кнопке
+toggleCollBtn.addEventListener('click', () => {
+	isShowColl = !isShowColl
+	localStorage.setItem('isShowColl', isShowColl)
+
+	toggleCollBtn.textContent = isShowColl
+		? 'Выключить хитбоксы'
+		: 'Включить хитбоксы'
+})
 
 // === Кнопка завершения игры ===
 endGameBtn.addEventListener('click', async () => {
@@ -360,20 +381,16 @@ function startLoop() {
 		})
 
 		ctx.clearRect(0, 0, canvas.width, canvas.height)
-		drawMap(ctx, true)
+		drawMap(ctx, isShowColl)
 
 		Object.values(positions).forEach(p => {
 			ctx.fillStyle = p.color || 'magenta'
 			ctx.fillRect(p.x, p.y, p.width, p.height)
-			ctx.strokeStyle = 'red'
-			ctx.lineWidth = 2
-			ctx.strokeRect(p.x, p.y, p.width, p.height)
-		})
-
-		collisionRects.forEach(r => {
-			ctx.strokeStyle = 'blue'
-			ctx.lineWidth = 1
-			ctx.strokeRect(r.x, r.y, r.width, r.height)
+			if (isShowColl) {
+				ctx.strokeStyle = 'red'
+				ctx.lineWidth = 2
+				ctx.strokeRect(p.x, p.y, p.width, p.height)
+			}
 		})
 
 		set(

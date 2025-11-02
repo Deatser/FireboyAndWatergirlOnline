@@ -52,18 +52,24 @@ canvas {
 	border-radius: 20px;
 }
 
-#endGameBtn {
+/* Кнопки */
+.buttons {
+	display: flex;
+	gap: 15px;
 	margin-top: 20px;
+}
+
+.game-btn {
 	padding: 12px 28px;
 	font-size: 1.1em;
 	border: none;
 	border-radius: 10px;
 	cursor: pointer;
-	background: #ff5555;
 	color: white;
+	background: #ff5555;
 	transition: background-color 0.3s;
 }
 
-#endGameBtn:hover {
+.game-btn:hover {
 	background: #ff2222;
 }
