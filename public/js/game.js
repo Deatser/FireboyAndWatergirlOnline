@@ -89,18 +89,15 @@ async function checkIsPlaying() {
 const toggleCollBtn = document.getElementById('toggleCollBtn')
 let isShowColl = localStorage.getItem('isShowColl') === 'true'
 
-// При загрузке страницы — установить текст кнопки и состояние
 if (isShowColl) {
 	toggleCollBtn.textContent = 'Выключить хитбоксы'
 } else {
 	toggleCollBtn.textContent = 'Включить хитбоксы'
 }
 
-// Обработчик клика по кнопке
 toggleCollBtn.addEventListener('click', () => {
 	isShowColl = !isShowColl
 	localStorage.setItem('isShowColl', isShowColl)
-
 	toggleCollBtn.textContent = isShowColl
 		? 'Выключить хитбоксы'
 		: 'Включить хитбоксы'
@@ -114,13 +111,8 @@ endGameBtn.addEventListener('click', async () => {
 		const myServerKey = userData?.currentGame
 		if (!myServerKey) return
 
-		// Ставим start = false на сервере
 		await set(ref(db, `servers/${myServerKey}/start`), false)
-
-		// Удаляем игрока с сервера
 		await remove(ref(db, `servers/${myServerKey}/players/${playerUid}`))
-
-		// Обнуляем данные игрока
 		await set(ref(db, `users/${playerUid}`), {
 			isPlaying: false,
 			playingWith: null,
@@ -128,11 +120,7 @@ endGameBtn.addEventListener('click', async () => {
 			currentGame: null,
 			isGamePageActive: -1,
 		})
-
-		// Локальные данные
 		localStorage.removeItem('myServerKey')
-
-		// Редирект
 		window.location.href = 'servers.html'
 	} catch (err) {
 		console.error('Ошибка при завершении игры:', err)
@@ -163,10 +151,50 @@ let positions = {} // { uid: { x, y, width, height, color } }
 let targetPositions = {}
 const PLAYER_W = 35
 const PLAYER_H = 64
-
-// === Линейная интерполяция ===
 function lerp(a, b, t) {
 	return a + (b - a) * t
+}
+
+// === Анимация персонажей ===
+const totalFrames = 5
+const player1Frames = []
+const player2Frames = []
+
+for (let i = 1; i <= totalFrames; i++) {
+	const img1 = new Image()
+	img1.src = `assets/player1/idle${i}.png`
+	player1Frames.push(img1)
+
+	const img2 = new Image()
+	img2.src = `assets/player2/idle${i}.png`
+	player2Frames.push(img2)
+}
+
+let animFrameIndex = 0
+let animTimer = 0
+const animSpeed = 150 // мс между кадрами
+
+// Размер спрайта (можно подогнать под хитбокс)
+const SPRITE_W = 48
+const SPRITE_H = 72
+
+function drawPlayer(player, characterId) {
+	const frames = characterId === 1 ? player1Frames : player2Frames
+	const frame = frames[animFrameIndex]
+	if (!frame.complete) return
+
+	// Отрисовка: по X центрирован, по Y низ совпадает с нижней границей хитбокса
+	const drawX = player.x + player.width / 2 - SPRITE_W / 2
+	const drawY = player.y + player.height - SPRITE_H
+
+	ctx.drawImage(frame, drawX, drawY, SPRITE_W, SPRITE_H)
+
+	// Хитбокс (по желанию)
+	if (isShowColl) {
+		ctx.strokeStyle = 'red'
+		ctx.lineWidth = 2
+		ctx.strokeRect(player.x, player.y, player.width, player.height)
+	}
 }
 
 // === Отрисовка карты ===
@@ -208,7 +236,6 @@ async function initGame() {
 	character = userData?.character
 	partnerUid = userData?.playingWith
 	const myServerKey = userData?.currentGame
-
 	if (!character || character === -1 || !myServerKey) {
 		console.error('Нет персонажа или сервера — редирект')
 		window.location.href = 'servers.html'
@@ -218,7 +245,6 @@ async function initGame() {
 	const myColor = character === 1 ? 'orange' : 'cyan'
 	const partnerColor = character === 1 ? 'cyan' : 'orange'
 
-	// Игрок
 	const posSnap = await get(
 		ref(db, `servers/${myServerKey}/positions/${playerUid}`)
 	)
@@ -234,7 +260,6 @@ async function initGame() {
 	}
 	targetPositions[playerUid] = startX
 
-	// Партнёр
 	if (partnerUid) {
 		const partnerSnap = await get(ref(db, `users/${partnerUid}`))
 		if (partnerSnap.exists()) {
@@ -257,7 +282,6 @@ async function initGame() {
 		}
 	}
 
-	// Подписка на позиции с сервера
 	onValue(ref(db, `servers/${myServerKey}/positions`), snap => {
 		const data = snap.val()
 		if (!data) return
@@ -281,7 +305,7 @@ async function initGame() {
 	startLoop()
 }
 
-// === Главный цикл с прыжками ===
+// === Главный цикл с прыжками и анимацией ===
 function startLoop() {
 	const speed = 2
 	const gravity = 0.05
@@ -320,12 +344,10 @@ function startLoop() {
 			return
 		}
 
-		// Движение по X
 		if (keys.a || keys.ф) player.x -= speed
 		if (keys.d || keys.в) player.x += speed
 		player.x = Math.max(0, Math.min(canvas.width - player.width, player.x))
 
-		// Проверка горизонтальных коллизий
 		for (const rect of collisionRects) {
 			const px = player.x,
 				py = player.y,
@@ -343,7 +365,6 @@ function startLoop() {
 			}
 		}
 
-		// Движение по Y
 		velocityY += gravity
 		if (velocityY > maxFallSpeed) velocityY = maxFallSpeed
 		let newY = player.y + velocityY
@@ -370,7 +391,6 @@ function startLoop() {
 		}
 		player.y = newY
 
-		// Линейная интерполяция позиций других игроков
 		Object.keys(positions).forEach(uid => {
 			if (uid !== playerUid)
 				positions[uid].x = lerp(
@@ -380,26 +400,27 @@ function startLoop() {
 				)
 		})
 
+		// Обновление анимации
+		const now = Date.now()
+		if (now - animTimer > animSpeed) {
+			animTimer = now
+			animFrameIndex = (animFrameIndex + 1) % totalFrames
+		}
+
 		ctx.clearRect(0, 0, canvas.width, canvas.height)
 		drawMap(ctx, isShowColl)
 
-		Object.values(positions).forEach(p => {
-			ctx.fillStyle = p.color || 'magenta'
-			ctx.fillRect(p.x, p.y, p.width, p.height)
-			if (isShowColl) {
-				ctx.strokeStyle = 'red'
-				ctx.lineWidth = 2
-				ctx.strokeRect(p.x, p.y, p.width, p.height)
-			}
+		Object.keys(positions).forEach(uid => {
+			const p = positions[uid]
+			const charId =
+				uid === playerUid ? character : p.color === 'orange' ? 1 : 2
+			drawPlayer(p, charId)
 		})
 
 		set(
 			ref(
 				db,
-				`servers/${
-					positions[playerUid].currentGame ||
-					localStorage.getItem('myServerKey')
-				}/positions/${playerUid}`
+				`servers/${localStorage.getItem('myServerKey')}/positions/${playerUid}`
 			),
 			{
 				x: player.x,
