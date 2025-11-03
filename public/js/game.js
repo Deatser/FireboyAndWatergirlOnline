@@ -147,7 +147,7 @@ document.addEventListener('keyup', e => {
 // === Игроки и позиции ===
 let character = null
 let partnerUid = null
-let positions = {} // { uid: { x, y, width, height, color } }
+let positions = {}
 let targetPositions = {}
 const PLAYER_W = 35
 const PLAYER_H = 64
@@ -159,7 +159,6 @@ function lerp(a, b, t) {
 const totalFrames = 5
 const player1Frames = []
 const player2Frames = []
-
 for (let i = 1; i <= totalFrames; i++) {
 	const img1 = new Image()
 	img1.src = `assets/player1/idle${i}.png`
@@ -169,27 +168,88 @@ for (let i = 1; i <= totalFrames; i++) {
 	img2.src = `assets/player2/idle${i}.png`
 	player2Frames.push(img2)
 }
+const player1RunFrames = []
+const player2RunFrames = []
+for (let i = 1; i <= totalFrames; i++) {
+	const img1 = new Image()
+	img1.src = `assets/player1/run${i}.png`
+	player1RunFrames.push(img1)
+
+	const img2 = new Image()
+	img2.src = `assets/player2/run${i}.png`
+	player2RunFrames.push(img2)
+}
 
 let animFrameIndex = 0
 let animTimer = 0
-const animSpeed = 150 // мс между кадрами
-
-// Размер спрайта (можно подогнать под хитбокс)
+const animSpeed = 150
 const SPRITE_W = 48
 const SPRITE_H = 72
+let lastDirection = {}
 
-function drawPlayer(player, characterId) {
-	const frames = characterId === 1 ? player1Frames : player2Frames
+const player1JumpUpFrames = []
+const player1JumpDownFrames = []
+const player2JumpUpFrames = []
+const player2JumpDownFrames = []
+for (let i = 1; i <= totalFrames; i++) {
+	const up1 = new Image()
+	up1.src = `assets/player1/jump_up${i}.png`
+	player1JumpUpFrames.push(up1)
+
+	const down1 = new Image()
+	down1.src = `assets/player1/jump_down${i}.png`
+	player1JumpDownFrames.push(down1)
+
+	const up2 = new Image()
+	up2.src = `assets/player2/jump_up${i}.png`
+	player2JumpUpFrames.push(up2)
+
+	const down2 = new Image()
+	down2.src = `assets/player2/jump_down${i}.png`
+	player2JumpDownFrames.push(down2)
+}
+
+function drawPlayer(
+	player,
+	characterId,
+	isMoving = false,
+	direction = 'right'
+) {
+	let frames
+
+	// === Определяем фазу прыжка ===
+	const jumpPhase = player.jumpPhase ?? 'idle'
+	if (jumpPhase === 'jump') {
+		frames = characterId === 1 ? player1JumpUpFrames : player2JumpUpFrames
+	} else if (jumpPhase === 'fall') {
+		frames = characterId === 1 ? player1JumpDownFrames : player2JumpDownFrames
+	} else if (jumpPhase === 'idle_air') {
+		frames = characterId === 1 ? player1Frames : player2Frames
+	} else {
+		frames = isMoving
+			? characterId === 1
+				? player1RunFrames
+				: player2RunFrames
+			: characterId === 1
+			? player1Frames
+			: player2Frames
+	}
+
 	const frame = frames[animFrameIndex]
 	if (!frame.complete) return
 
-	// Отрисовка: по X центрирован, по Y низ совпадает с нижней границей хитбокса
 	const drawX = player.x + player.width / 2 - SPRITE_W / 2
 	const drawY = player.y + player.height - SPRITE_H
 
-	ctx.drawImage(frame, drawX, drawY, SPRITE_W, SPRITE_H)
+	ctx.save()
+	if (direction === 'left') {
+		ctx.scale(-1, 1)
+		ctx.drawImage(frame, -drawX - SPRITE_W, drawY, SPRITE_W, SPRITE_H)
+	} else {
+		ctx.drawImage(frame, drawX, drawY, SPRITE_W, SPRITE_H)
+	}
+	ctx.restore()
 
-	// Хитбокс (по желанию)
 	if (isShowColl) {
 		ctx.strokeStyle = 'red'
 		ctx.lineWidth = 2
@@ -257,6 +317,7 @@ async function initGame() {
 		width: PLAYER_W,
 		height: PLAYER_H,
 		color: myColor,
+		jumpPhase: 'idle',
 	}
 	targetPositions[playerUid] = startX
 
@@ -277,6 +338,7 @@ async function initGame() {
 				width: PLAYER_W,
 				height: PLAYER_H,
 				color: partnerColor,
+				jumpPhase: 'idle',
 			}
 			targetPositions[partnerUid] = pStartX
 		}
@@ -286,26 +348,21 @@ async function initGame() {
 		const data = snap.val()
 		if (!data) return
 		Object.keys(data).forEach(uid => {
-			if (!positions[uid]) {
-				positions[uid] = {
-					x: data[uid].x,
-					y: data[uid].y ?? canvas.height - PLAYER_H,
-					width: PLAYER_W,
-					height: PLAYER_H,
-					color: data[uid].color,
-				}
-				targetPositions[uid] = data[uid].x
-			} else if (uid !== playerUid) {
-				targetPositions[uid] = data[uid].x
-				positions[uid].y = data[uid].y ?? positions[uid].y
+			if (!positions[uid]) positions[uid] = { ...data[uid] }
+			else {
+				positions[uid].x = data[uid].x
+				positions[uid].y = data[uid].y
+				positions[uid].isMoving = data[uid].isMoving
+				positions[uid].jumpPhase = data[uid].jumpPhase ?? 'idle'
 			}
+			targetPositions[uid] = data[uid].x
 		})
 	})
 
 	startLoop()
 }
 
-// === Главный цикл с прыжками и анимацией ===
+// === Главный цикл ===
 function startLoop() {
 	const speed = 2
 	const gravity = 0.05
@@ -368,6 +425,8 @@ function startLoop() {
 		velocityY += gravity
 		if (velocityY > maxFallSpeed) velocityY = maxFallSpeed
 		let newY = player.y + velocityY
+		player.velocityY = velocityY
+
 		for (const rect of collisionRects) {
 			if (player.x + player.width > rect.x && player.x < rect.x + rect.width) {
 				if (
@@ -391,6 +450,16 @@ function startLoop() {
 		}
 		player.y = newY
 
+		// === Определение jumpPhase ===
+		if (velocityY < -0.5) player.jumpPhase = 'jump'
+		else if (velocityY > 0.5) player.jumpPhase = 'fall'
+		else if (
+			Math.abs(velocityY) <= 0.5 &&
+			player.y + player.height < canvas.height
+		)
+			player.jumpPhase = 'idle_air'
+		else player.jumpPhase = 'idle'
+
 		Object.keys(positions).forEach(uid => {
 			if (uid !== playerUid)
 				positions[uid].x = lerp(
@@ -400,7 +469,6 @@ function startLoop() {
 				)
 		})
 
-		// Обновление анимации
 		const now = Date.now()
 		if (now - animTimer > animSpeed) {
 			animTimer = now
@@ -414,8 +482,31 @@ function startLoop() {
 			const p = positions[uid]
 			const charId =
 				uid === playerUid ? character : p.color === 'orange' ? 1 : 2
-			drawPlayer(p, charId)
+
+			let moveLeft = false
+			let moveRight = false
+
+			if (uid === playerUid) {
+				moveLeft = keys.a || keys.ф
+				moveRight = keys.d || keys.в
+			} else {
+				if (!lastDirection[uid]) lastDirection[uid] = 'right'
+				if (p.prevX !== undefined) {
+					if (p.x < p.prevX) lastDirection[uid] = 'left'
+					else if (p.x > p.prevX) lastDirection[uid] = 'right'
+				}
+				p.prevX = p.x
+			}
+
+			if (moveLeft) lastDirection[uid] = 'left'
+			else if (moveRight) lastDirection[uid] = 'right'
+
+			const isMoving =
+				p.isMoving ?? (uid === playerUid && (moveLeft || moveRight))
+			drawPlayer(p, charId, isMoving, lastDirection[uid])
 		})
+
+		const isMovingNow = keys.a || keys.ф || keys.d || keys.в
 
 		set(
 			ref(
@@ -426,6 +517,8 @@ function startLoop() {
 				x: player.x,
 				y: player.y,
 				color: player.color,
+				isMoving: isMovingNow,
+				jumpPhase: player.jumpPhase,
 			}
 		).catch(e => console.warn('Ошибка при записи позиций:', e))
 
