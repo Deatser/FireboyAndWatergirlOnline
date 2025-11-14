@@ -5,6 +5,8 @@ import {
 	set,
 	onValue,
 	remove,
+	update,
+	runTransaction,
 } from 'https://www.gstatic.com/firebasejs/11.0.1/firebase-database.js'
 
 let mapData = null
@@ -46,9 +48,27 @@ const collisionRects = collisionLayer
 			y: Number(obj.y),
 			width: Number(obj.width),
 			height: Number(obj.height),
+			rotation: Number(obj.rotation) || 0,
 	  }))
 	: []
+
 console.log('Коллизий найдено:', collisionRects.length, collisionRects)
+
+// === Гемы ===
+const gemLayer = mapData.layers.find(
+	l => l.name === 'gems' && l.type === 'objectgroup'
+)
+let gems = gemLayer
+	? gemLayer.objects.map(obj => ({
+			id: obj.id,
+			x: Number(obj.x),
+			y: Number(obj.y),
+			width: Number(obj.width) || 32,
+			height: Number(obj.height) || 32,
+			collected: false,
+	  }))
+	: []
+console.log('Гемов найдено:', gems.length, gems)
 
 // === Игроки ===
 const playerUid = localStorage.getItem('playerUid')
@@ -119,6 +139,7 @@ endGameBtn.addEventListener('click', async () => {
 			character: -1,
 			currentGame: null,
 			isGamePageActive: -1,
+			gemCount: 0,
 		})
 		localStorage.removeItem('myServerKey')
 		window.location.href = 'servers.html'
@@ -285,7 +306,28 @@ function drawMap(ctx, showHitboxes = true) {
 	if (showHitboxes) {
 		ctx.strokeStyle = 'blue'
 		ctx.lineWidth = 1
-		collisionRects.forEach(r => ctx.strokeRect(r.x, r.y, r.width, r.height))
+
+		collisionRects.forEach(r => {
+			if (!r.rotation) {
+				// Без вращения - обычный прямоугольник
+				ctx.strokeRect(r.x, r.y, r.width, r.height)
+				return
+			}
+
+			ctx.save()
+
+			// Canvas вращает вокруг текущей точки (0,0)
+			// Нужно сместить origin в левый верхний угол прямоугольника
+			ctx.translate(r.x, r.y)
+
+			// Вращаем вокруг этого origin
+			ctx.rotate((r.rotation * Math.PI) / 180)
+
+			// Рисуем прямоугольник относительно (0,0)
+			ctx.strokeRect(0, 0, r.width, r.height)
+
+			ctx.restore()
+		})
 	}
 }
 
@@ -296,6 +338,12 @@ async function initGame() {
 	character = userData?.character
 	partnerUid = userData?.playingWith
 	const myServerKey = userData?.currentGame
+
+	// Создаём gemCount если нет
+	if (userData?.gemCount === undefined) {
+		await update(ref(db, `users/${playerUid}`), { gemCount: 0 })
+	}
+
 	if (!character || character === -1 || !myServerKey) {
 		console.error('Нет персонажа или сервера — редирект')
 		window.location.href = 'servers.html'
@@ -377,12 +425,35 @@ function startLoop() {
 		if ((e.key === 'w' || e.key === 'ц' || e.key === ' ') && jumpKeyReleased) {
 			const player = positions[playerUid]
 			if (!player) return
-			let onGround = collisionRects.some(
-				r =>
-					player.x + player.width > r.x &&
-					player.x < r.x + r.width &&
-					Math.abs(player.y + player.height - r.y) < 1
-			)
+			let onGround = collisionRects.some(rect => {
+				if (!rect.rotation) {
+					// обычный блок
+					return (
+						player.x + player.width > rect.x &&
+						player.x < rect.x + rect.width &&
+						Math.abs(player.y + player.height - rect.y) < 1
+					)
+				} else {
+					// наклонный блок
+					const cx = rect.x + rect.width / 2
+					const cy = rect.y + rect.height / 2
+					const rad = (rect.rotation * Math.PI) / 180
+
+					// нижний центр игрока относительно блока
+					const relX = player.x + player.width / 2 - cx
+					const relY = player.y + player.height - cy
+					const unrotX = relX * Math.cos(-rad) - relY * Math.sin(-rad)
+					const unrotY = relX * Math.sin(-rad) + relY * Math.cos(-rad)
+
+					const halfW = rect.width / 2 + player.width / 2
+					const halfH = rect.height / 2 + player.height / 2
+
+					return (
+						Math.abs(unrotX) < halfW && Math.abs(unrotY) < halfH && unrotY > 0
+					)
+				}
+			})
+
 			if (onGround) {
 				velocityY = jumpForce
 				jumpKeyReleased = false
@@ -405,49 +476,143 @@ function startLoop() {
 		if (keys.d || keys.в) player.x += speed
 		player.x = Math.max(0, Math.min(canvas.width - player.width, player.x))
 
+		// Горизонтальная коллизия (X)
 		for (const rect of collisionRects) {
 			const px = player.x,
 				py = player.y,
 				pw = player.width,
 				ph = player.height
-			const rx = rect.x,
-				ry = rect.y,
-				rw = rect.width,
-				rh = rect.height
-			if (px < rx + rw && px + pw > rx && py < ry + rh && py + ph > ry) {
-				const overlapLeft = px + pw - rx
-				const overlapRight = rx + rw - px
-				if (overlapLeft < overlapRight) player.x -= overlapLeft
-				else player.x += overlapRight
+
+			if (!rect.rotation) {
+				// обычная коллизия без rotation
+				const rx = rect.x,
+					ry = rect.y,
+					rw = rect.width,
+					rh = rect.height
+
+				if (px < rx + rw && px + pw > rx && py < ry + rh && py + ph > ry) {
+					const overlapLeft = px + pw - rx
+					const overlapRight = rx + rw - px
+					if (overlapLeft < overlapRight) player.x -= overlapLeft
+					else player.x += overlapRight
+				}
+			} else {
+				// коллизия с rotation — используем origin как в отрисовке
+				const cx = rect.x
+				const cy = rect.y
+				const rad = (rect.rotation * Math.PI) / 180
+
+				// проверяем горизонтальные углы игрока
+				const corners = [
+					{ x: px, y: py + ph / 2 },
+					{ x: px + pw, y: py + ph / 2 },
+				]
+
+				for (const corner of corners) {
+					const relX = corner.x - cx
+					const relY = corner.y - cy
+					const localX = relX * Math.cos(-rad) - relY * Math.sin(-rad)
+					const localY = relX * Math.sin(-rad) + relY * Math.cos(-rad)
+
+					if (
+						localX >= 0 &&
+						localX <= rect.width &&
+						localY >= 0 &&
+						localY <= rect.height
+					) {
+						// угол игрока внутри блока — смещаем игрока горизонтально
+						const offsetX = localX
+						const newGlobalX = corner.x - offsetX * Math.cos(rad)
+						const deltaX = newGlobalX - corner.x
+						player.x += deltaX
+						break
+					}
+				}
+
+				// Тест: наклонный блок оранжевый
+				ctx.save()
+				ctx.translate(cx, cy)
+				ctx.rotate(rad)
+				ctx.fillStyle = 'orange'
+				ctx.fillRect(0, 0, rect.width, rect.height)
+				ctx.restore()
 			}
 		}
 
+		// Вертикальная коллизия (Y)
 		velocityY += gravity
 		if (velocityY > maxFallSpeed) velocityY = maxFallSpeed
 		let newY = player.y + velocityY
 		player.velocityY = velocityY
 
 		for (const rect of collisionRects) {
-			if (player.x + player.width > rect.x && player.x < rect.x + rect.width) {
-				if (
-					player.y + player.height <= rect.y &&
-					newY + player.height >= rect.y
-				) {
-					newY = rect.y - player.height
-					velocityY = 0
-				} else if (
-					player.y >= rect.y + rect.height &&
-					newY <= rect.y + rect.height
-				) {
-					newY = rect.y + rect.height
-					velocityY = 0
+			if (!rect.rotation) {
+				// обычный блок
+				const rx = rect.x,
+					ry = rect.y,
+					rw = rect.width,
+					rh = rect.height
+				if (player.x + player.width > rx && player.x < rx + rw) {
+					if (player.y + player.height <= ry && newY + player.height >= ry) {
+						newY = ry - player.height
+						velocityY = 0
+					} else if (player.y >= ry + rh && newY <= ry + rh) {
+						newY = ry + rh
+						velocityY = 0
+					}
 				}
+			} else {
+				// наклонный блок — совпадает с тем, как рисуется
+				const cx = rect.x
+				const cy = rect.y
+				const rad = (rect.rotation * Math.PI) / 180
+
+				// нижние углы игрока
+				const corners = [
+					{ x: player.x, y: player.y + player.height },
+					{ x: player.x + player.width, y: player.y + player.height },
+				]
+
+				for (const corner of corners) {
+					// переводим в локальные координаты блока
+					const relX = corner.x - cx
+					const relY = corner.y - cy
+					const localX = relX * Math.cos(-rad) - relY * Math.sin(-rad)
+					const localY = relX * Math.sin(-rad) + relY * Math.cos(-rad)
+
+					if (
+						localX >= 0 &&
+						localX <= rect.width &&
+						localY >= 0 &&
+						localY <= rect.height
+					) {
+						// угол игрока внутри блока — выставляем нижний край игрока на верх блока
+						const offsetY = localY
+						// обратно в глобальные координаты
+						const newGlobalY = corner.y - offsetY * Math.cos(rad)
+						const deltaY = newGlobalY - (player.y + player.height)
+						player.y += deltaY
+						velocityY *= 0.3 // скольжение
+						break
+					}
+				}
+
+				// Тест: наклонный блок оранжевый
+				ctx.save()
+				ctx.translate(cx, cy)
+				ctx.rotate(rad)
+				ctx.fillStyle = 'orange'
+				ctx.fillRect(0, 0, rect.width, rect.height)
+				ctx.restore()
 			}
 		}
+
+		// Нижний предел канвы
 		if (newY + player.height > canvas.height) {
 			newY = canvas.height - player.height
 			velocityY = 0
 		}
+
 		player.y = newY
 
 		// === Определение jumpPhase ===
@@ -475,8 +640,259 @@ function startLoop() {
 			animFrameIndex = (animFrameIndex + 1) % totalFrames
 		}
 
+		// Слой воды — создаём один раз после загрузки карты
+		const waterLayer = mapData.layers.find(
+			l => l.name === 'water' && l.type === 'objectgroup'
+		)
+		const waterRects = waterLayer
+			? waterLayer.objects.map(obj => ({
+					x: Number(obj.x),
+					y: Number(obj.y),
+					width: Number(obj.width),
+					height: Number(obj.height),
+			  }))
+			: []
+
+		// === Внутри draw(), после player.y = newY ===
+		player.y = newY
+
+		// Слой огня — создаём один раз после загрузки карты
+		const fireLayer = mapData.layers.find(
+			l => l.name === 'fire' && l.type === 'objectgroup'
+		)
+		const fireRects = fireLayer
+			? fireLayer.objects.map(obj => ({
+					x: Number(obj.x),
+					y: Number(obj.y),
+					width: Number(obj.width),
+					height: Number(obj.height),
+			  }))
+			: []
+
+		// --- Проверка на воду ---
+		for (const uid of Object.keys(positions)) {
+			const p = positions[uid]
+			const charId =
+				uid === playerUid ? character : p.color === 'orange' ? 1 : 2
+
+			if (charId === 2) {
+				for (const w of waterRects) {
+					const collided =
+						p.x < w.x + w.width &&
+						p.x + p.width > w.x &&
+						p.y < w.y + w.height &&
+						p.y + p.height > w.y
+
+					if (collided) {
+						// Телепортируем обоих игроков, как в fire
+						Object.keys(positions).forEach(uid2 => {
+							const p2 = positions[uid2]
+							const startX = uid2 === playerUid ? 81 : 81
+							const startY =
+								uid2 === playerUid
+									? character === 1
+										? 830
+										: 703.1875
+									: p2.color === 'orange'
+									? 831.04347826087
+									: 703.1875
+
+							p2.x = startX
+							p2.y = startY
+							p2.jumpPhase = 'idle'
+							p2.isMoving = false
+						})
+
+						// Сбрасываем velocity игрока, чтобы не «провалился» вниз
+						velocityY = 0
+						break
+					}
+				}
+			}
+		}
+
+		// --- Проверка на fire ---
+		for (const uid of Object.keys(positions)) {
+			const p = positions[uid]
+			const charId =
+				uid === playerUid ? character : p.color === 'orange' ? 1 : 2
+
+			if (charId === 1) {
+				for (const f of fireRects) {
+					const collided =
+						p.x < f.x + f.width &&
+						p.x + p.width > f.x &&
+						p.y < f.y + f.height &&
+						p.y + p.height > f.y
+
+					if (collided) {
+						// Телепортируем обоих игроков, как в water
+						Object.keys(positions).forEach(uid2 => {
+							const p2 = positions[uid2]
+							const startX = uid2 === playerUid ? 81 : 81
+							const startY =
+								uid2 === playerUid
+									? character === 1
+										? 830
+										: 703.1875
+									: p2.color === 'orange'
+									? 831.04347826087
+									: 703.1875
+
+							p2.x = startX
+							p2.y = startY
+							p2.jumpPhase = 'idle'
+							p2.isMoving = false
+						})
+
+						// Сбрасываем вертикальную скорость локально
+						velocityY = 0
+						break
+					}
+				}
+			}
+		}
+
+		// --- Создаём слои waterexit и fireexit после загрузки карты ---
+		const waterExitLayer = mapData.layers.find(
+			l => l.name === 'waterexit' && l.type === 'objectgroup'
+		)
+		const waterExitRects = waterExitLayer
+			? waterExitLayer.objects.map(obj => ({
+					x: Number(obj.x),
+					y: Number(obj.y),
+					width: Number(obj.width),
+					height: Number(obj.height),
+			  }))
+			: []
+
+		const fireExitLayer = mapData.layers.find(
+			l => l.name === 'fireexit' && l.type === 'objectgroup'
+		)
+		const fireExitRects = fireExitLayer
+			? fireExitLayer.objects.map(obj => ({
+					x: Number(obj.x),
+					y: Number(obj.y),
+					width: Number(obj.width),
+					height: Number(obj.height),
+			  }))
+			: []
+
+		// --- Проверка выхода в draw() ---
+		let char1OnFireExit = false
+		let char2OnWaterExit = false
+
+		for (const uid of Object.keys(positions)) {
+			const p = positions[uid]
+			const charId =
+				uid === playerUid ? character : p.color === 'orange' ? 1 : 2
+
+			if (charId === 1) {
+				for (const f of fireExitRects) {
+					const collided =
+						p.x < f.x + f.width &&
+						p.x + p.width > f.x &&
+						p.y < f.y + f.height &&
+						p.y + p.height > f.y
+					if (collided) {
+						char1OnFireExit = true
+						break
+					}
+				}
+			}
+
+			if (charId === 2) {
+				for (const w of waterExitRects) {
+					const collided =
+						p.x < w.x + w.width &&
+						p.x + p.width > w.x &&
+						p.y < w.y + w.height &&
+						p.y + p.height > w.y
+					if (collided) {
+						char2OnWaterExit = true
+						break
+					}
+				}
+			}
+		}
+
+		// --- Если оба игрока на своих exit ---
+		if (char1OnFireExit && char2OnWaterExit) {
+			// Показываем overlay у обоих
+			Object.keys(positions).forEach(uid => {
+				const p = positions[uid]
+				p.isMoving = false // блокировка движения
+			})
+
+			// Создаём overlay (например div поверх canvas)
+			if (!document.getElementById('game-win-overlay')) {
+				const overlay = document.createElement('div')
+				overlay.id = 'game-win-overlay'
+				overlay.style.position = 'fixed'
+				overlay.style.top = 0
+				overlay.style.left = 0
+				overlay.style.width = '100vw'
+				overlay.style.height = '100vh'
+				overlay.style.backgroundColor = 'rgba(0,0,0,0.8)'
+				overlay.style.display = 'flex'
+				overlay.style.flexDirection = 'column'
+				overlay.style.justifyContent = 'center'
+				overlay.style.alignItems = 'center'
+				overlay.style.fontSize = '48px'
+				overlay.style.color = '#fff'
+				overlay.style.zIndex = 9999
+
+				const text = document.createElement('div')
+				text.innerText = 'Вы играли'
+				overlay.appendChild(text)
+
+				// Добавляем кнопку "Закончить игру"
+				const endBtnClone = endGameBtn.cloneNode(true) // клонируем существующую кнопку
+				endBtnClone.style.fontSize = '24px'
+				endBtnClone.style.marginTop = '20px'
+				endBtnClone.style.display = 'block'
+				endBtnClone.style.pointerEvents = 'auto' // чтобы была кликабельна
+				endBtnClone.id = 'overlay-end-btn'
+				endBtnClone.addEventListener('click', () => {
+					endGameBtn.click() // вызываем существующую логику
+				})
+
+				overlay.appendChild(endBtnClone)
+
+				document.body.appendChild(overlay)
+			}
+		}
+
+		// === Дальше идёт рендеринг гемов и игроков ===
 		ctx.clearRect(0, 0, canvas.width, canvas.height)
 		drawMap(ctx, isShowColl)
+
+		// === Отрисовка и сбор гемов ===
+		// Рендерим невзятые гемы (простая заливка, можно заменить на картинку)
+		ctx.fillStyle = 'yellow'
+		gems.forEach(g => {
+			if (!g.collected) ctx.fillRect(g.x, g.y, g.width, g.height)
+		})
+
+		// Проверяем пересечение игрока с гемами — при пересечении помечаем collected и запускаем транзакцию
+		for (const g of gems) {
+			if (g.collected) continue
+			if (
+				player.x < g.x + g.width &&
+				player.x + player.width > g.x &&
+				player.y < g.y + g.height &&
+				player.y + player.height > g.y
+			) {
+				g.collected = true
+				// атомарно увеличить gemCount в базе
+				const gemCountRef = ref(db, `users/${playerUid}/gemCount`)
+				runTransaction(gemCountRef, current => {
+					return (current || 0) + 1
+				}).catch(err => {
+					console.warn('Ошибка при увеличении gemCount:', err)
+				})
+			}
+		}
 
 		Object.keys(positions).forEach(uid => {
 			const p = positions[uid]
