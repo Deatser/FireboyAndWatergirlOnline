@@ -403,7 +403,6 @@ async function initGame() {
 				positions[uid].isMoving = data[uid].isMoving
 				positions[uid].jumpPhase = data[uid].jumpPhase ?? 'idle'
 			}
-			targetPositions[uid] = data[uid].x
 		})
 	})
 
@@ -412,11 +411,13 @@ async function initGame() {
 
 // === Главный цикл ===
 function startLoop() {
-	const speed = 8 // для герцовки разный
-	const gravity = 0.05
-	const jumpForce = -12.5 * Math.sqrt(gravity / 0.6)
-	const maxFallSpeed = 12
-	let velocityY = 0
+	// --- Новая физика: всё в пикселях/сек и пикселях/сек^2 ---
+	const MOVE_SPEED = 350 // px/sec — горизонтальная скорость
+	const GRAVITY = 1500 // px/sec^2 — ускорение вниз
+	const JUMP_VELOCITY = -650 // px/sec — начальная скорость прыжка (вверх отрицательная)
+	const MAX_FALL_SPEED = 1000 // px/sec — ограничение скорости падения
+
+	let velocityY = 0 // вертикальная скорость локального игрока (px/sec)
 	let jumpKeyReleased = true
 	const lerpFactor = 0.2
 
@@ -428,10 +429,11 @@ function startLoop() {
 			let onGround = collisionRects.some(rect => {
 				if (!rect.rotation) {
 					// обычный блок
+					// проверяем, близок ли нижний край игрока к верхнему краю блока
 					return (
 						player.x + player.width > rect.x &&
 						player.x < rect.x + rect.width &&
-						Math.abs(player.y + player.height - rect.y) < 1
+						Math.abs(player.y + player.height - rect.y) < 3
 					)
 				} else {
 					// наклонный блок
@@ -455,7 +457,7 @@ function startLoop() {
 			})
 
 			if (onGround) {
-				velocityY = jumpForce
+				velocityY = JUMP_VELOCITY
 				jumpKeyReleased = false
 			}
 		}
@@ -467,10 +469,11 @@ function startLoop() {
 
 	let lastTime = performance.now()
 	function draw(now) {
-		const delta = (now - lastTime) / 16.666 // делим на 16.666 ≈ 60 FPS
-		lastTime = now
+		if (typeof now === 'undefined') now = performance.now()
 
-		const speed = 2 * delta // умножаем на дельту
+		// deltaSeconds — время в секундах между кадрами
+		const deltaSeconds = Math.max(0, (now - lastTime) / 1000)
+		lastTime = now
 
 		const player = positions[playerUid]
 		if (!player) {
@@ -478,8 +481,11 @@ function startLoop() {
 			return
 		}
 
-		if (keys.a || keys.ф) player.x -= speed
-		if (keys.d || keys.в) player.x += speed
+		// Горизонтальное движение (независимое от FPS)
+		const moveLeft = keys.a || keys.ф
+		const moveRight = keys.d || keys.в
+		if (moveLeft) player.x -= MOVE_SPEED * deltaSeconds
+		if (moveRight) player.x += MOVE_SPEED * deltaSeconds
 		player.x = Math.max(0, Math.min(canvas.width - player.width, player.x))
 
 		// Горизонтальная коллизия (X)
@@ -545,10 +551,10 @@ function startLoop() {
 			}
 		}
 
-		// Вертикальная коллизия (Y)
-		velocityY += gravity
-		if (velocityY > maxFallSpeed) velocityY = maxFallSpeed
-		let newY = player.y + velocityY
+		// Вертикальная коллизия (Y) — физика независимая от FPS
+		velocityY += GRAVITY * deltaSeconds
+		if (velocityY > MAX_FALL_SPEED) velocityY = MAX_FALL_SPEED
+		let newY = player.y + velocityY * deltaSeconds
 		player.velocityY = velocityY
 
 		for (const rect of collisionRects) {
@@ -630,15 +636,6 @@ function startLoop() {
 		)
 			player.jumpPhase = 'idle_air'
 		else player.jumpPhase = 'idle'
-
-		Object.keys(positions).forEach(uid => {
-			if (uid !== playerUid)
-				positions[uid].x = lerp(
-					positions[uid].x,
-					targetPositions[uid],
-					lerpFactor
-				)
-		})
 
 		const currentTime = Date.now()
 		if (currentTime - animTimer > animSpeed) {
@@ -849,7 +846,7 @@ function startLoop() {
 				overlay.style.zIndex = 9999
 
 				const text = document.createElement('div')
-				text.innerText = 'Вы играли'
+				text.innerText = 'Вы выиграли!'
 				overlay.appendChild(text)
 
 				// Добавляем кнопку "Закончить игру"
@@ -946,7 +943,7 @@ function startLoop() {
 
 		requestAnimationFrame(draw)
 	}
-	draw()
+	requestAnimationFrame(draw)
 }
 
 // === Старт ===
