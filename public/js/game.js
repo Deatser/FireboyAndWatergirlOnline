@@ -412,7 +412,7 @@ async function initGame() {
 
 // === Главный цикл ===
 function startLoop() {
-	const speed = 2
+	const speed = 8 // для герцовки разный
 	const gravity = 0.05
 	const jumpForce = -12.5 * Math.sqrt(gravity / 0.6)
 	const maxFallSpeed = 12
@@ -465,7 +465,13 @@ function startLoop() {
 		if (e.key === 'w' || e.key === 'ц' || e.key === ' ') jumpKeyReleased = true
 	})
 
-	function draw() {
+	let lastTime = performance.now()
+	function draw(now) {
+		const delta = (now - lastTime) / 16.666 // делим на 16.666 ≈ 60 FPS
+		lastTime = now
+
+		const speed = 2 * delta // умножаем на дельту
+
 		const player = positions[playerUid]
 		if (!player) {
 			requestAnimationFrame(draw)
@@ -634,9 +640,9 @@ function startLoop() {
 				)
 		})
 
-		const now = Date.now()
-		if (now - animTimer > animSpeed) {
-			animTimer = now
+		const currentTime = Date.now()
+		if (currentTime - animTimer > animSpeed) {
+			animTimer = currentTime
 			animFrameIndex = (animFrameIndex + 1) % totalFrames
 		}
 

@@ -2,7 +2,7 @@
 import { initializeApp } from 'https://www.gstatic.com/firebasejs/11.0.1/firebase-app.js'
 import {
 	getDatabase,
-	connectDatabaseEmulator,
+	//connectDatabaseEmulator,
 } from 'https://www.gstatic.com/firebasejs/11.0.1/firebase-database.js'
 import {
 	getAuth,
@@ -28,8 +28,8 @@ const app = initializeApp(firebaseConfig)
 export const db = getDatabase(app)
 
 // Подключение к локальному эмулятору Realtime Database
-connectDatabaseEmulator(db, 'localhost', 9000)
-console.log('Подключение к эмулятору Realtime Database')
+//connectDatabaseEmulator(db, 'localhost', 9000)
+//console.log('Подключение к эмулятору Realtime Database')
 
 // Firebase Auth
 export const auth = getAuth(app)
